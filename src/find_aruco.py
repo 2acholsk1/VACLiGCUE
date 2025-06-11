@@ -11,9 +11,18 @@ from main import dms_to_decimal
 
 # Configuration constants
 IMG_DIR = Path("../")
-CSV_PATH = Path("bbox.csv")
+CSV_PATH = Path("bbox10.csv")
 WIN_SIZE = 1500
 STRIDE = 700
+
+def intrinsic():
+    K = np.array([[2720.51946242, 0, 2066.0622728],
+              [0, 2726.34873667, 1543.55527727],
+              [0, 0, 1]])
+
+    # Distortion coefficients: k1, k2, p1, p2
+    dist = np.array([0.06989963, -0.11571736, 0.00095562, 0.0022504])
+    return K, dist
 
 def loop_dirs(root: Path) -> list[Path]:
     """Return all sub‑directories of *root* that end with '_loop', sorted alphabetically."""
@@ -47,6 +56,7 @@ def detect_markers(image: np.ndarray, detector, win_size: int, stride: int):
     """Slide a window over *image* and detect markers. Return a dict[id] = corners."""
     detections = {}
     h, w = image.shape[:2]
+    
     for y in range(0, h - win_size + 1, stride):
         for x in range(0, w - win_size + 1, stride):
             window = image[y : y + win_size, x : x + win_size]
@@ -56,16 +66,35 @@ def detect_markers(image: np.ndarray, detector, win_size: int, stride: int):
                     detections[int(marker_id)] = corners[i] + np.array([[x, y]])  # offset to full‑image coords
     return detections
 
+from scipy.spatial.transform import Rotation as R
+import navpy
 
 def log_and_draw_detections(image: np.ndarray, detections: dict, filename: str, writer: csv.writer, metadata):
     """Log detections to CSV and draw outlines/IDs on *image*. Return (front_corners, back_corners)."""
     front = back = None
-    gimbal_yaw, lat_drone, lon_drone, image_width, image_height, center_image, real_distance, fov, alt = telemetry(metadata)
+    orientation, lat_drone, lon_drone, image_width, image_height, center_image, real_distance, fov, alt = telemetry(metadata)
+    K, dist = intrinsic()
     for marker_id, corners in detections.items():
         corners_c = corners.squeeze(axis=0)
-        lat, lon = pixel_to_marker_positon(
-            corners_c, real_distance, center_image, gimbal_yaw, lat_drone, lon_drone
-        )
+        center = np.mean(corners[0], axis=0).astype(int)
+        
+        pixel_h = np.array([corners_c[0][1], corners_c[0][0], 1])
+        ray_cam = np.linalg.inv(K) @ pixel_h
+        ray_cam /= np.linalg.norm(ray_cam)
+        
+        # R_cam_to_ned = R.from_euler('zyx', np.radians(orientation), degrees=False).as_matrix()
+        # ray_ned = R_cam_to_ned @ ray_cam
+        # drone_ned = np.array([lat_drone, lon_drone, alt])
+        # dz = ray_ned[2]
+        # z_ground = 0
+        # t = (z_ground - drone_ned[2]) / dz
+        # intersection_ned = drone_ned + t * ray_ned
+        # lat, lon = intersection_ned[0], intersection_ned[1]
+        # ecef = navpy.nad2ecef(intersection_ned, lat_drone, lon_drone, alt)
+        
+        # lat, lon = pixel_to_marker_positon(
+        #     corners_c, real_distance, center_image, gimbal_yaw, lat_drone, lon_drone
+        # )
         # target = np.mean(corners_c, axis=0).astype(int)
         # lat, lon = pixel_to_latlon_with_size(
         #     target, real_distance, (corners_c[0], corners_c[1]),
@@ -76,7 +105,6 @@ def log_and_draw_detections(image: np.ndarray, detections: dict, filename: str, 
         # )
         writer.writerow([filename, marker_id] + [int(c) for corner in corners[0] for c in corner]+ [lat, lon])
         cv2.polylines(image, [np.int32(corners)], True, (0, 255, 0), 2)
-        center = np.mean(corners[0], axis=0).astype(int)
         cv2.putText(image, f"ID: {marker_id}", tuple(center), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 10)
         if marker_id == 1:
             front = corners
@@ -190,6 +218,8 @@ def draw_heading(image: np.ndarray, front_corners, back_corners):
 
 def telemetry(metadata):   
     gimbal_yaw = extract_number(metadata["Gimbal Yaw Degree"])
+    gimbal_roll = extract_number(metadata["Gimbal Roll Degree"])
+    gimbal_pitch = extract_number(metadata["Gimbal Pitch Degree"])
     lat_drone = parse_dms_string(metadata["GPS Latitude"])
     lon_drone = parse_dms_string(metadata["GPS Longitude"])
     image_width = int(metadata["Exif Image Width"])
@@ -198,12 +228,14 @@ def telemetry(metadata):
     alt = extract_number(metadata["Absolute Altitude"])
     center_image = (image_height // 2, image_width // 2)
     real_distance = 0.56
-    return gimbal_yaw, lat_drone, lon_drone, image_width, image_height, center_image, real_distance, fov, alt
+    orientation = np.array([gimbal_yaw, gimbal_pitch, gimbal_roll])
+    return orientation, lat_drone, lon_drone, image_width, image_height, center_image, real_distance, fov, alt
 
 def process_image(img_path: Path, detector, writer: csv.writer, win_size=1500, stride=700, metadata=None):
     """Process a single image: detect markers, annotate, save CSV; return annotated image and heading angle."""
     pil_img = Image.open(img_path)
     image = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+    # image = cv2.undistort(image, K, dist)
     detections = detect_markers(image, detector, win_size, stride)
     front, back = log_and_draw_detections(image, detections, img_path.name, writer, metadata)
     angle = draw_heading(image, front, back)
@@ -260,7 +292,7 @@ def apriltag_process_image(img_path: Path, detector):
 def main():
     detector = init_detector()
     aprilltag_detector = init_apriltag_detector()
-    for img_dir in loop_dirs(IMG_DIR):
+    for img_dir in loop_dirs(IMG_DIR)[:1]:
         print(f"Processing directory: {img_dir.name}")
         image_files = list_images(img_dir)
         csv_path = img_dir / CSV_PATH
