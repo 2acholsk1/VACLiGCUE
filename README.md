@@ -1,4 +1,5 @@
 # Drone-Car Synchronization Platform
+%for img in *.JPG; do exiftool "$img" > "meta_${img%.JPG}.txt"; done
 
 Dataset i kod w projekcie umożliwia analizę danych z drona i pojazdu w celu synchronizacji czasowej i przestrzennej pomiędzy źródłami, przy wykorzystaniu znaczników ArUco. Główne zastosowanie to względna lokalizacja pojazdu na podstawie danych obrazowych i pozycyjnych.
 
