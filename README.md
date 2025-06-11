@@ -1,62 +1,57 @@
 # Drone-Car Synchronization Platform
-%for img in *.JPG; do exiftool "$img" > "meta_${img%.JPG}.txt"; done
-
-Dataset i kod w projekcie umożliwia analizę danych z drona i pojazdu w celu synchronizacji czasowej i przestrzennej pomiędzy źródłami, przy wykorzystaniu znaczników ArUco. Główne zastosowanie to względna lokalizacja pojazdu na podstawie danych obrazowych i pozycyjnych.
+The dataset and code in this project enable the analysis of drone and vehicle data for temporal and spatial synchronization between the sources, using ArUco markers.
+The main application is relative localization of the vehicle based on image and positioning data.
 
 ![Widok z drona](test_platform/DJI_20250513140908_0373_D.JPG)
 
-## Dane wejściowe
+## Input Data
 
-### 1. Zdjęcia drona
-Pliki JPG zawierające obrazy wykonane z powietrza. W folderach `xx_loop` posortowane zdjęcia dotyczące konkretnych przejazdów przy konkretnej wysokości lotu i konkretnym ujęciu.
+> **Note:** If you want to use our data, just request it from the collaborators.
 
-### 2. `drone_metadata.csv`
-Zawiera informacje o lokalizacji drona w chwili wykonania każdego zdjęcia:
-- `PhotoName`, `PhotoDate`, `PhotoTimestamp`
-- `DroneLatitude`, `DroneLongitude`, `DroneAltitude`
+## How to use?
 
-### 3. `drone_car.csv`
+1. If you have folder with photos from drone, you need to extract exif data form photos with command:
+```bash
+python3 src/extract_metadata.py folder-with-photos
+```
+2. After created `.txt` files with `exif` data, we need to export them all to `.csv` file with command:
+```bash
+python3 src/export_metadata.py folder-with-exifs output-file.csv
+```
+> **Note:**  All this files will be created in folder with photos.
 
-Ten plik zawiera zsynchronizowane dane z drona i pojazdu, dopasowane na podstawie znaczników czasu (`PhotoTimestamp`). Każdy wiersz odpowiada jednej chwili wykonania zdjęcia przez drona i zawiera:
+3. Create `.csv` files extracted from rosbag topic. Each topic choosen = one `.csv` file generated. Do it with this command:
+```bash
+python3 src/robsag2csv.py rosbag-folder --output-dir output_name_folder --prefix prefix_name
+```
 
-- `PhotoName`, `PhotoDate`, `PhotoTimestamp` – informacje o zdjęciu i czasie jego wykonania
-- `DroneLatitude`, `DroneLongitude`, `DroneAltitude` – pozycja GPS drona
-- `lat`, `lon`, `alt` – pozycja pojazdu w tym samym momencie (pochodząca z systemu lokalizacji auta)
+4. Connect data, exif_data.csv (from drone) and car_data.csv (from rosbag) to correspond `.csv` file. Choose specific files to connect. Data is connecting with 0.5 second nearest read.
+```bash
+python3 src/data_connect.py --exif exif_name.csv --rosbag rosbag_name.csv --output output_dir_name
+```
 
-Dzięki tym danym możliwe jest:
-- wizualne porównanie położenia pojazdu na zdjęciach z danymi GPS,
-- ocena dokładności synchronizacji,
-- przeprowadzanie analiz lokalizacji względnej przy użyciu znaczników ArUco.
+> **Note:** Remeber about time synchonization between drone and car. For our purpouses rosbag data were edited manually in `rosbag2csv.py` script to adding specific time to df['time']
 
-### 4. Pliki `.bag` (rosbag) w folderze rosbags
-Zawierają dane z systemów pojazdu, np.:
-- `/sensing/gnss/...`: pozycja i prędkość,
-- `/localization/pose_twist_fusion_filter/kinematic_state`: estymowana pozycja,
-- `/sensing/imu/imu_raw`: dane inercyjne.
+## Test Platform
 
-Informacje o tematach i czasie dostępne są w `metadata.yaml`.
+### DJI Mavic Air 3S Drone
 
-
-## Platforma testowa
-
-### Dron DJI Mavic 3
-
-### Platforma jezdna
+### Ground Platform Pixloop
 
 ![platform1](test_platform/DJI_20250513140934_0374_D.JPG)
 ![platform2](test_platform/DJI_20250513140936_0375_D.JPG)
 ![platform2](test_platform/DJI_20250513140938_0376_D.JPG)
 
-## Wymagania
+## Requirements
 Python 3.8+
 
-ROS 2 (do użycia rosbag)
+ROS 2 (for using rosbag)
 
-biblioteki: `opencv-python`, `pandas`, `numpy`, `pyyaml`
+Libraries: `opencv-python`, `pandas`, `numpy`, `pyyaml`
 
-## Autor
+## Authors
 
-Autor: Piotr Zacholski
-Operatorzy: Bartosz Ptak (dron), Stanisław Kuczma (platforma jezdna)
-Data: czerwiec 2025
+Authors: Piotr Zacholski, Maciej Krupka
+Operators: Bartosz Ptak (drone), Stanisław Kuczma (ground platform)
+Date: June 2025
 

@@ -2,3 +2,5 @@ pandas
 numpy
 pillow
 rosbags
+click
+matplotlib
