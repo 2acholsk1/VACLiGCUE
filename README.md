@@ -25,9 +25,14 @@ python3 src/export_metadata.py folder-with-exifs output-file.csv
 python3 src/robsag2csv.py rosbag-folder --output-dir output_name_folder --prefix prefix_name
 ```
 
-4. Connect data, exif_data.csv (from drone) and car_data.csv (from rosbag) to correspond `.csv` file. Choose specific files to connect. Data is connecting with 0.5 second nearest read.
+4. Create `.csv` file for AprilTags detected on photos. Use this script:
 ```bash
-python3 src/data_connect.py --exif exif_name.csv --rosbag rosbag_name.csv --output output_dir_name
+python3 src/extract_april_tags_center.py input_folder_name output_csv_name --scale 0.5 --min-area 4000
+```
+
+5. Connect data, exif_data.csv (from drone) and car_data.csv (from rosbag) to correspond `.csv` file. Choose specific files to connect. Data is connecting with 0.5 second nearest read.
+```bash
+python3 src/data_connect.py --exif exif_name.csv --rosbag rosbag_name.csv --tags tag_name.csv --output output_dir_name
 ```
 
 > **Note:** Remeber about time synchonization between drone and car. For our purpouses rosbag data were edited manually in `rosbag2csv.py` script to adding specific time to df['time']

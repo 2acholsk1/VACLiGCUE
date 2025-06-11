@@ -4,3 +4,6 @@ pillow
 rosbags
 click
 matplotlib
+apriltag
+opencv-python
+pyproj
