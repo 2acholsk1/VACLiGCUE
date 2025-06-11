@@ -11,7 +11,7 @@ from main import dms_to_decimal
 
 # Configuration constants
 IMG_DIR = Path("../")
-CSV_PATH = Path("bbox10.csv")
+CSV_PATH = Path("bbox.csv")
 WIN_SIZE = 1500
 STRIDE = 700
 
@@ -68,6 +68,7 @@ def detect_markers(image: np.ndarray, detector, win_size: int, stride: int):
 
 from scipy.spatial.transform import Rotation as R
 import navpy
+import pymap3d as pm   #  pip install pymap3d
 
 def log_and_draw_detections(image: np.ndarray, detections: dict, filename: str, writer: csv.writer, metadata):
     """Log detections to CSV and draw outlines/IDs on *image*. Return (front_corners, back_corners)."""
@@ -76,24 +77,28 @@ def log_and_draw_detections(image: np.ndarray, detections: dict, filename: str, 
     K, dist = intrinsic()
     for marker_id, corners in detections.items():
         corners_c = corners.squeeze(axis=0)
-        center = np.mean(corners[0], axis=0).astype(int)
+        center_obj = np.mean(corners[0], axis=0).astype(int)
         
-        pixel_h = np.array([corners_c[0][1], corners_c[0][0], 1])
+        pixel_h = np.array([center_obj[0], center_obj[1], 1])
         ray_cam = np.linalg.inv(K) @ pixel_h
         ray_cam /= np.linalg.norm(ray_cam)
         
-        # R_cam_to_ned = R.from_euler('zyx', np.radians(orientation), degrees=False).as_matrix()
-        # ray_ned = R_cam_to_ned @ ray_cam
-        # drone_ned = np.array([lat_drone, lon_drone, alt])
-        # dz = ray_ned[2]
-        # z_ground = 0
-        # t = (z_ground - drone_ned[2]) / dz
-        # intersection_ned = drone_ned + t * ray_ned
-        # lat, lon = intersection_ned[0], intersection_ned[1]
-        # ecef = navpy.nad2ecef(intersection_ned, lat_drone, lon_drone, alt)
+        R_cam_to_ned = R.from_euler('zyx', np.radians(orientation), degrees=False).as_matrix()
+        ray_ned = R_cam_to_ned @ ray_cam
+        p_ned_drone = np.array([lat_drone, lon_drone, alt]) # <------------- tu chyba trzeba zmienic na geodetic
+        dz = ray_ned[2]
+        z_ground = 0
+        t = (z_ground - p_ned_drone[2]) / dz
+        intersection_ned = p_ned_drone + t * ray_ned
+        n, e, d = intersection_ned        # D is +Down
+        lat, lon, h_gnd = pm.ned2geodetic(n, e, -d,   # -d → metres above ellipsoid
+                                          p_ned_drone[0], p_ned_drone[1], p_ned_drone[2])
+        # print(f"drone NED: {p_ned_drone}")
+        # print(f"Intersection NED: {intersection_ned}")
+        # print(f"Intersection Geodetic: {lat}, {lon}, {h_gnd}")
         
         # lat, lon = pixel_to_marker_positon(
-        #     corners_c, real_distance, center_image, gimbal_yaw, lat_drone, lon_drone
+        #     corners_c, real_distance, center_image, orientation[0], lat_drone, lon_drone
         # )
         # target = np.mean(corners_c, axis=0).astype(int)
         # lat, lon = pixel_to_latlon_with_size(
@@ -105,7 +110,7 @@ def log_and_draw_detections(image: np.ndarray, detections: dict, filename: str, 
         # )
         writer.writerow([filename, marker_id] + [int(c) for corner in corners[0] for c in corner]+ [lat, lon])
         cv2.polylines(image, [np.int32(corners)], True, (0, 255, 0), 2)
-        cv2.putText(image, f"ID: {marker_id}", tuple(center), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 10)
+        cv2.putText(image, f"ID: {marker_id}", tuple(center_obj), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 10)
         if marker_id == 1:
             front = corners
         elif marker_id == 0:
@@ -292,7 +297,7 @@ def apriltag_process_image(img_path: Path, detector):
 def main():
     detector = init_detector()
     aprilltag_detector = init_apriltag_detector()
-    for img_dir in loop_dirs(IMG_DIR)[:1]:
+    for img_dir in loop_dirs(IMG_DIR):
         print(f"Processing directory: {img_dir.name}")
         image_files = list_images(img_dir)
         csv_path = img_dir / CSV_PATH
