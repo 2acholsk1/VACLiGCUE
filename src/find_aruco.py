@@ -70,6 +70,34 @@ from scipy.spatial.transform import Rotation as R
 import navpy
 import pymap3d as pm   #  pip install pymap3d
 
+import utm
+
+def lla_to_utm(lat, lon, alt=0.0):
+    """
+    Convert Latitude, Longitude, and Altitude (LLA) to UTM.
+
+    Args:
+        lat (float): Latitude in decimal degrees.
+        lon (float): Longitude in decimal degrees.
+        alt (float): Altitude in meters.
+
+    Returns:
+        dict: A dictionary containing:
+            - easting (float)
+            - northing (float)
+            - zone_number (int)
+            - zone_letter (str)
+            - altitude (float)
+    """
+    easting, northing, zone_number, zone_letter = utm.from_latlon(lat, lon)
+    return {
+        "easting": easting,
+        "northing": northing,
+        "zone_number": zone_number,
+        "zone_letter": zone_letter,
+        "altitude": alt
+    }
+    
 def log_and_draw_detections(image: np.ndarray, detections: dict, filename: str, writer: csv.writer, metadata):
     """Log detections to CSV and draw outlines/IDs on *image*. Return (front_corners, back_corners)."""
     front = back = None
@@ -85,18 +113,22 @@ def log_and_draw_detections(image: np.ndarray, detections: dict, filename: str, 
         
         R_cam_to_ned = R.from_euler('zyx', np.radians(orientation), degrees=False).as_matrix()
         ray_ned = R_cam_to_ned @ ray_cam
-        p_ned_drone = np.array([lat_drone, lon_drone, alt]) # <------------- tu chyba trzeba zmienic na geodetic
+        utm_coords = lla_to_utm(lat_drone, lon_drone, alt)
+        # print(f"Utm coords: {utm_coords}")
+        # print(f"easting: {utm_coords['easting']}, northing: {utm_coords['northing']}, alt: {utm_coords['altitude']}")
+        # print(f"type easting: {type(utm_coords['easting'])}, type northing: {type(utm_coords['northing'])}, type alt: {type(utm_coords['altitude'])}")
+        p_ned_drone = np.array([utm_coords["easting"], utm_coords["northing"], utm_coords["altitude"]])
         dz = ray_ned[2]
         z_ground = 0
         t = (z_ground - p_ned_drone[2]) / dz
         intersection_ned = p_ned_drone + t * ray_ned
         n, e, d = intersection_ned        # D is +Down
-        lat, lon, h_gnd = pm.ned2geodetic(n, e, -d,   # -d → metres above ellipsoid
-                                          p_ned_drone[0], p_ned_drone[1], p_ned_drone[2])
-        # print(f"drone NED: {p_ned_drone}")
-        # print(f"Intersection NED: {intersection_ned}")
-        # print(f"Intersection Geodetic: {lat}, {lon}, {h_gnd}")
-        
+
+        print(f"drone NED: {p_ned_drone}")
+        print(f"Intersection NED: {intersection_ned}")
+        print(f"Intersection Geodetic: {n}, {e}, {d}")
+        lat = n
+        lon = e
         # lat, lon = pixel_to_marker_positon(
         #     corners_c, real_distance, center_image, orientation[0], lat_drone, lon_drone
         # )
