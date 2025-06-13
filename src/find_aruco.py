@@ -16,8 +16,8 @@ WIN_SIZE = 1500
 STRIDE = 700
 
 def intrinsic():
-    K = np.array([[2720.51946242, 0, 2066.0622728],
-              [0, 2726.34873667, 1543.55527727],
+    K = np.array([[2566.36, 0, 2057.75],
+              [0, 1924.78, 1539.10],
               [0, 0, 1]])
 
     # Distortion coefficients: k1, k2, p1, p2
@@ -114,9 +114,6 @@ def log_and_draw_detections(image: np.ndarray, detections: dict, filename: str, 
         R_cam_to_ned = R.from_euler('zyx', np.radians(orientation), degrees=False).as_matrix()
         ray_ned = R_cam_to_ned @ ray_cam
         utm_coords = lla_to_utm(lat_drone, lon_drone, alt)
-        # print(f"Utm coords: {utm_coords}")
-        # print(f"easting: {utm_coords['easting']}, northing: {utm_coords['northing']}, alt: {utm_coords['altitude']}")
-        # print(f"type easting: {type(utm_coords['easting'])}, type northing: {type(utm_coords['northing'])}, type alt: {type(utm_coords['altitude'])}")
         p_ned_drone = np.array([utm_coords["easting"], utm_coords["northing"], utm_coords["altitude"]])
         dz = ray_ned[2]
         z_ground = 0
@@ -124,9 +121,6 @@ def log_and_draw_detections(image: np.ndarray, detections: dict, filename: str, 
         intersection_ned = p_ned_drone + t * ray_ned
         n, e, d = intersection_ned        # D is +Down
 
-        print(f"drone NED: {p_ned_drone}")
-        print(f"Intersection NED: {intersection_ned}")
-        print(f"Intersection Geodetic: {n}, {e}, {d}")
         lat = n
         lon = e
         # lat, lon = pixel_to_marker_positon(
@@ -149,6 +143,36 @@ def log_and_draw_detections(image: np.ndarray, detections: dict, filename: str, 
             back = corners
     return front, back
 
+def log_and_draw_april_detections(image: np.ndarray, detections, filename: str, writer: csv.writer, metadata):
+    """Log detections to CSV and draw outlines/IDs on *image*. Return (front_corners, back_corners)."""
+    front = back = None
+    orientation, lat_drone, lon_drone, image_width, image_height, center_image, real_distance, fov, alt = telemetry(metadata)
+    T_world_cam = np.eye(4)
+    R_cam_to_ned = R.from_euler('zyx', np.radians(orientation), degrees=False).as_matrix()
+    e_drone, n_drone, zone_number, zone_letter = utm.from_latlon(lat_drone, lon_drone)
+    T_world_cam[:3, 3] = np.array([e_drone, n_drone, alt])
+    T_world_cam[:3, :3] = R_cam_to_ned
+    for tag in detections:
+        x = tag.corners[:, 0]
+        y = tag.corners[:, 1]
+        area = 0.5 * np.abs(np.dot(x, np.roll(y, 1)) - np.dot(y, np.roll(x, 1)))
+        if area < 1000:
+            continue
+        T_cam_obj = np.eye(4)
+        T_cam_obj[:3, :3] = tag.pose_R
+        T_cam_obj[:3, 3] = tag.pose_t.squeeze()
+        T_obj_cam = np.linalg.inv(T_cam_obj)
+        T_world_obj = T_world_cam @ T_obj_cam
+        obj_position_world = T_world_obj[:3, 3]
+        center_obj = np.mean(tag.corners, axis=0).astype(int)
+        cv2.polylines(image, [np.int32(tag.corners)], True, (0, 255, 0), 2)
+        cv2.putText(image, f"ID: {tag.tag_id}", tuple(center_obj), cv2.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 10)
+        writer.writerow([filename, tag.tag_id] +  [c for corner in tag.corners for c in corner]+ [obj_position_world[0], obj_position_world[1]])
+        if tag.tag_id == 1:
+            front = tag.corners
+        elif tag.tag_id == 0:
+            back = tag.corners
+    return front, back
 
 def pixel_to_marker_positon(corners, real_distance, center_image, gimbal_yaw, lat_drone, lon_drone):
     uA, vA = corners[0][1], corners[0][0]
@@ -247,8 +271,8 @@ def draw_heading(image: np.ndarray, front_corners, back_corners):
     """Draw a heading arrow from back to front; return heading angle in degrees if both tags present."""
     if front_corners is None or back_corners is None:
         return None
-    front_center = np.mean(front_corners[0], axis=0).astype(int)
-    back_center = np.mean(back_corners[0], axis=0).astype(int)
+    front_center = np.mean(front_corners, axis=0).astype(int)
+    back_center = np.mean(back_corners, axis=0).astype(int)
     cv2.arrowedLine(image, tuple(back_center), tuple(front_center), (255, 0, 0), 10, tipLength=0.4)
     vec = front_center - back_center
     return np.degrees(np.arctan2(vec[1], vec[0]))
@@ -275,13 +299,26 @@ def process_image(img_path: Path, detector, writer: csv.writer, win_size=1500, s
     # image = cv2.undistort(image, K, dist)
     detections = detect_markers(image, detector, win_size, stride)
     front, back = log_and_draw_detections(image, detections, img_path.name, writer, metadata)
-    angle = draw_heading(image, front, back)
-
+    angle = 0.0 #draw_heading(image, front, back)
+    
     return image, angle, detections
 
+def apriltag_process_image(img_path: Path, detector, writer: csv.writer, metadata=None):
+    pil_img = Image.open(img_path)
+    image = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    K, dist = intrinsic()
+    # gray = cv2.undistort(gray, K, dist)
+    fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
+    tags = detector.detect(gray, estimate_tag_pose=True, camera_params=[fx, fy, cx, cy], tag_size=0.56)
+    print(tags)
+    front, back = log_and_draw_april_detections(image, tags, img_path.name, writer, metadata)
+    angle = draw_heading(image, front, back)
+    
+    return image, angle, tags
 def init_apriltag_detector():
     """Initialise and return an AprilTag detector."""
-    return Detector(families="tag16h5", nthreads=4)
+    return Detector(families="tag16h5", nthreads=4, quad_decimate=1.0, quad_sigma=0.8, refine_edges=True, decode_sharpening=0.25, debug=False)
     # return Detector(families="tag16h5", nthreads=4, quad_decimate=1.0, quad_sigma=0.0,
     #                 refine_edges=True, decode_sharpening=0.25, debug=False)
 
@@ -319,13 +356,6 @@ def parse_dms_string(dms_str):
     else:
         raise ValueError(f"Invalid DMS format: {dms_str}")
 
-def apriltag_process_image(img_path: Path, detector):
-    pil_img = Image.open(img_path)
-    image = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    tags = detector.detect(gray, estimate_tag_pose=False, camera_params=None, tag_size=None)
-    return tags, image
-
 def main():
     detector = init_detector()
     aprilltag_detector = init_apriltag_detector()
@@ -343,35 +373,13 @@ def main():
             for img_path in image_files:
                 metadata_path = img_path.name[:-4]
                 metadata_path = img_path.with_name("meta_" + img_path.name).with_suffix(".txt")
+                print(f"Processing image: {img_path.name}")
                 metadata = extract_info_from_txt(metadata_path)
                 start = time.time()
-                annotated, angle, detections = process_image(img_path, detector, writer, WIN_SIZE, STRIDE, metadata)
+                annotated, angle, detections = apriltag_process_image(img_path, aprilltag_detector, writer, metadata)
                 results += len(detections)
-    
-                # print(f"Detection took {time.time() - start:.2f} seconds")
-                # if angle is not None:
-                #     print(f"Heading angle for {img_path.name}: {angle:.2f} degrees")
-                tags, image = apriltag_process_image(img_path, aprilltag_detector)
-
-                pil_img = Image.open(img_path)
-                image_color = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
-                tags = [tag for tag in tags if tag.tag_id in [0, 1]]
-                for tag in tags:
-                    for idx in range(len(tag.corners)):
-                        cv2.line(image_color, tuple(tag.corners[idx-1, :].astype(int)), tuple(tag.corners[idx, :].astype(int)), (0, 255, 0))
-                    # print(f"Detected tag ID: {tag.tag_id}, Corners: {tag.corners}")
-                    
-                    cv2.putText(image_color, str(tag.tag_id),
-                                org=(tag.corners[0, 0].astype(int)+10,tag.corners[0, 1].astype(int)+10),
-                                fontFace=cv2.FONT_HERSHEY_SIMPLEX,
-                                fontScale=3,
-                                thickness=10,
-                                color=(0, 0, 255))
-                # cv2.imshow("Annotated Image", cv2.resize(image_color, (1280, 720)))
-                # cv2.waitKey(1)
-                #save annotated image
                 annotated_path = img_dir / f"annotated_{img_path.name[:-4]}_april.png"
-                # cv2.imwrite(str(annotated_path), image_color)
+                cv2.imwrite(str(annotated_path), annotated)
         print(f"Processed {len(image_files)} images in {img_dir.name}")
         print("results", results/ (len(image_files)*2))
         print(f"Saved CSV to {csv_path} and annotated images to {img_dir}")
